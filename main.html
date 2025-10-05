@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Enhanced Image Viewer with Minimap</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, sans-serif; 
+            background: #000; 
+            overflow: hidden; 
+            color: white; 
+        }
+        #viewer-container { 
+            width: 100vw; 
+            height: 100vh; 
+            position: relative; 
+            cursor: grab; 
+            overflow: hidden; 
+        }
+        #viewer-container.grabbing { cursor: grabbing; }
+        #image-canvas { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            image-rendering: -webkit-optimize-contrast; 
+            image-rendering: crisp-edges; 
+        }
+        #svg-overlay { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            pointer-events: none; 
+            width: 100%; 
+            height: 100%; 
+        }
+        .annotation-marker { cursor: pointer; pointer-events: all; }
+        .annotation-marker:hover circle { r: 8; }
+        #toolbar { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            right: 0; 
+            background: linear-gradient(180deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%); 
+            padding: 15px 20px; 
+            display:flex; 
+            gap:10px; 
+            align-items:center; 
+            z-index:100; 
+        }
+        #controls { 
+            position:absolute; 
+            top:80px; 
+            right:20px; 
+            background: rgba(0,20,40,0.9); 
+            border:1px solid rgba(0,212,255,0.3); 
+            padding:20px; 
+            border-radius:10px; 
+            backdrop-filter: blur(10px); 
+            min-width:250px; 
+            max-height: calc(100vh - 120px); /* Limit height to viewport */
+            overflow-y: auto; /* Make controls scrollable if needed */
+        }
+        #info-panel { 
+            position:absolute; 
+            bottom:20px; 
+            left:20px; 
+            background: rgba(0,20,40,0.9); 
+            border:1px solid rgba(0,212,255,0.3); 
+            padding:15px 20px; 
+            border-radius:10px; 
+            backdrop-filter: blur(10px); 
+        }
+        button { 
+            background: linear-gradient(135deg, #0078d4, #005a9e); 
+            border:1px solid rgba(0,212,255,0.5); 
+            color:white; 
+            padding:10px 20px; 
+            cursor:pointer; 
+            border-radius:6px; 
+            font-size:14px; 
+            transition: all 0.3s; 
+            font-weight:500; 
+        }
+        button:hover { 
+            background: linear-gradient(135deg, #106ebe, #0078d4); 
+            transform: translateY(-2px); 
+            box-shadow: 0 4px 12px rgba(0,120,212,0.4); 
+        }
+        button:active { transform: translateY(0); }
+        .control-group { margin-bottom:20px; }
+        .control-group label { 
+            display:block; 
+            margin-bottom:8px; 
+            color:#00d4ff; 
+            font-weight:500; 
+            font-size:13px; 
+        }
+        .control-group input[type="range"] { width:100%; margin:10px 0; }
+        .info-row { 
+            display:flex; 
+            justify-content:space-between; 
+            padding:5px 0; 
+            border-bottom:1px solid rgba(255,255,255,0.1); 
+        }
+        .info-label { color:#00d4ff; font-size:13px; }
+        .info-value { font-weight:500; font-size:13px; }
+        #minimap { 
+            position:absolute; 
+            top:80px; 
+            left:20px; 
+            width:200px; 
+            height:150px; 
+            background: rgba(0,20,40,0.9); 
+            border:2px solid rgba(0,212,255,0.3); 
+            border-radius:8px; 
+            overflow:hidden; 
+        }
+        #minimap canvas { width:100%; height:100%; }
+        .annotation-list { 
+            max-height:120px; /* Reduced height for annotations */
+            overflow-y:auto; 
+            margin-top:10px; 
+            border: 1px solid rgba(0,212,255,0.2);
+            border-radius: 5px;
+            padding: 5px;
+        }
+        .annotation-item { 
+            background: rgba(255,255,255,0.05); 
+            padding:6px 10px; 
+            margin:3px 0; 
+            border-radius:3px; 
+            cursor:pointer; 
+            transition: all 0.2s; 
+            border-left:3px solid #00d4ff; 
+            font-size: 12px; /* Smaller font for annotations */
+        }
+        .annotation-item:hover { 
+            background: rgba(0,212,255,0.2); 
+            transform: translateX(2px); 
+        }
+        #loading { 
+            position:absolute; 
+            top:50%; 
+            left:50%; 
+            transform: translate(-50%,-50%); 
+            text-align:center; 
+            display:none; 
+            z-index:200; 
+        }
+        .spinner { 
+            border: 4px solid rgba(0,212,255,0.3); 
+            border-top: 4px solid #00d4ff; 
+            border-radius:50%; 
+            width:50px; 
+            height:50px; 
+            animation: spin 1s linear infinite; 
+            margin:0 auto 20px; 
+        }
+        @keyframes spin { 
+            0%{ transform: rotate(0deg);} 
+            100%{ transform: rotate(360deg);} 
+        }
+        input[type="file"] { display: none; }
+        .zoom-indicator { 
+            position:absolute; 
+            top:50%; 
+            left:50%; 
+            transform:translate(-50%,-50%); 
+            background: rgba(0,212,255,0.8); 
+            padding:10px 20px; 
+            border-radius:25px; 
+            font-size:24px; 
+            font-weight:bold; 
+            pointer-events:none; 
+            opacity:0; 
+            transition: opacity 0.3s; 
+        }
+        .zoom-indicator.show { opacity:1; }
+        .minimap-legend {
+            position: absolute;
+            bottom: 5px;
+            left: 5px;
+            font-size: 10px;
+            color: #00d4ff;
+            background: rgba(0,0,0,0.7);
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        .button-active {
+            background: linear-gradient(135deg, #00aaff, #0078d4) !important;
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.5) !important;
+        }
+        .controls-section {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(0,212,255,0.2);
+        }
+        .controls-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="toolbar">
+        <button onclick="document.getElementById('fileInput').click()">📂 Load Image</button>
+        <button onclick="resetView()">🔄 Reset View</button>
+        <button onclick="toggleAnnotationMode()"><span id="annotationModeText">🏷️ Add Tags</span></button>
+        <button onclick="toggleGrid()" id="gridToggleBtn">🔲 Toggle Grid</button>
+        <button onclick="toggleCellClickMode()" id="cellClickToggleBtn">🔒 Disable Cell Clicks</button>
+        <button onclick="exportAnnotations()">💾 Export</button>
+        <input type="file" id="fileInput" accept="image/svg+xml,image/*" />
+    </div>
+
+    <div id="viewer-container">
+        <canvas id="image-canvas"></canvas>
+        <svg id="svg-overlay"></svg>
+        <div id="zoom-indicator" class="zoom-indicator"></div>
+    </div>
+
+    <div id="minimap">
+        <canvas id="minimap-canvas"></canvas>
+        <div class="minimap-legend">Minimap</div>
+    </div>
+
+    <div id="controls">
+        <div class="controls-section">
+            <div class="control-group">
+                <label>Zoom Level: <span id="zoom-display">100%</span></label>
+                <input type="range" id="zoom-slider" min="10" max="2000" value="100" oninput="setZoomLevel(this.value)">
+            </div>
+
+            <div class="control-group">
+                <label>Brightness: <span id="brightness-display">100%</span></label>
+                <input type="range" id="brightness-slider" min="50" max="200" value="100" oninput="setBrightness(this.value)">
+            </div>
+
+            <div class="control-group">
+                <label>Contrast: <span id="contrast-display">100%</span></label>
+                <input type="range" id="contrast-slider" min="50" max="200" value="100" oninput="setContrast(this.value)">
+            </div>
+        </div>
+
+        <div class="controls-section">
+            <div class="control-group">
+                <label>Annotations (<span id="annotation-count">0</span>)</label>
+                <div class="annotation-list" id="annotation-list"></div>
+            </div>
+        </div>
+        
+        <div class="controls-section">
+            <div class="control-group">
+                <label>Tile Info</label>
+                <div class="info-row">
+                    <span class="info-label">Tiles Loaded:</span>
+                    <span class="info-value" id="tile-count">0</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Grid Size:</span>
+                    <span class="info-value" id="grid-size">N/A</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Cell Click Mode:</span>
+                    <span class="info-value" id="cell-click-status">Enabled</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="info-panel">
+        <div class="info-row"><span class="info-label">Position:</span><span class="info-value" id="position-display">0, 0</span></div>
+        <div class="info-row"><span class="info-label">Image Size:</span><span class="info-value" id="size-display">N/A</span></div>
+        <div class="info-row"><span class="info-label">Zoom:</span><span class="info-value" id="zoom-info">100%</span></div>
+        <div class="info-row"><span class="info-label">Cell:</span><span class="info-value" id="cell-display">N/A</span></div>
+    </div>
+
+    <div id="loading">
+        <div class="spinner"></div>
+        <div>Loading image...</div>
+    </div>
+
+    <script>
+        // State
+        const state = {
+            zoom: 1.0,
+            minZoom: 0.05,
+            maxZoom: 50.0,
+            offsetX: 0,
+            offsetY: 0,
+            isDragging: false,
+            lastX: 0,
+            lastY: 0,
+            image: null, // legacy single-image support
+            annotations: [],
+            annotationMode: false,
+            showGrid: false,
+            brightness: 100,
+            contrast: 100,
+            tileSize: 1024, // logical tile size in image-space (one cell)
+            gridImages: {}, // map "col,row" => { type, src, img }
+            selectedCell: null, // {col,row} while user is about to load a tile
+            cellClickEnabled: true // New state to control cell click behavior
+        };
+
+        // Elements
+        const canvas = document.getElementById('image-canvas');
+        const ctx = canvas.getContext('2d');
+        const svgOverlay = document.getElementById('svg-overlay');
+        const container = document.getElementById('viewer-container');
+        const minimapCanvas = document.getElementById('minimap-canvas');
+        const minimapCtx = minimapCanvas.getContext('2d');
+        const fileInput = document.getElementById('fileInput');
+
+        // Initialize
+        function init() {
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            setupEventListeners();
+            fileInput.addEventListener('change', loadImageFromFile);
+            updateTileInfo();
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            render();
+        }
+
+        // Events
+        function setupEventListeners() {
+            container.addEventListener('wheel', handleWheel, { passive: false });
+            container.addEventListener('mousedown', handleMouseDown);
+            container.addEventListener('mousemove', handleMouseMove);
+            container.addEventListener('mouseup', handleMouseUp);
+            container.addEventListener('mouseleave', handleMouseUp);
+            container.addEventListener('click', handleCellClick);
+            container.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                if (state.annotationMode) addAnnotation(e.clientX, e.clientY);
+            });
+            document.addEventListener('keydown', handleKeyboard);
+        }
+
+        function handleWheel(e) {
+            e.preventDefault();
+            const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+            const mouseX = e.clientX;
+            const mouseY = e.clientY;
+            const newZoom = Math.max(state.minZoom, Math.min(state.maxZoom, state.zoom * zoomFactor));
+            if (newZoom !== state.zoom) {
+                state.offsetX = mouseX - (mouseX - state.offsetX) * (newZoom / state.zoom);
+                state.offsetY = mouseY - (mouseY - state.offsetY) * (newZoom / state.zoom);
+                state.zoom = newZoom;
+                showZoomIndicator();
+                render();
+                updateUI();
+            }
+        }
+
+        function handleMouseDown(e) {
+            if (e.button === 0) {
+                state.isDragging = true;
+                state.lastX = e.clientX;
+                state.lastY = e.clientY;
+                container.classList.add('grabbing');
+            }
+        }
+
+        function handleMouseMove(e) {
+            if (state.isDragging) {
+                const dx = e.clientX - state.lastX;
+                const dy = e.clientY - state.lastY;
+                state.offsetX += dx;
+                state.offsetY += dy;
+                state.lastX = e.clientX;
+                state.lastY = e.clientY;
+                render();
+            }
+            updatePositionDisplay(e.clientX, e.clientY);
+        }
+
+        function handleMouseUp() {
+            state.isDragging = false;
+            container.classList.remove('grabbing');
+        }
+
+        function handleKeyboard(e) {
+            switch (e.key) {
+                case '+':
+                case '=':
+                    state.zoom *= 1.2;
+                    render(); updateUI();
+                    break;
+                case '-':
+                case '_':
+                    state.zoom *= 0.8;
+                    render(); updateUI();
+                    break;
+                case 'r':
+                case 'R':
+                    resetView();
+                    break;
+                case 'g':
+                case 'G':
+                    toggleGrid();
+                    break;
+                case 'c':
+                case 'C':
+                    toggleCellClickMode();
+                    break;
+            }
+        }
+
+        // Grid cell click: opens file picker only when grid is on and cell clicks are enabled
+        function handleCellClick(e) {
+            // Ignore clicks while dragging
+            if (state.isDragging) return;
+
+            // Only when grid is visible and cell clicks are enabled
+            if (!state.showGrid || !state.cellClickEnabled) return;
+
+            // Compute image-space coordinates, then cell coords
+            const imgX = (e.clientX - state.offsetX) / state.zoom;
+            const imgY = (e.clientY - state.offsetY) / state.zoom;
+            const col = Math.floor(imgX / state.tileSize);
+            const row = Math.floor(imgY / state.tileSize);
+
+            state.selectedCell = { col, row };
+            render();
+            // Open file picker for user to choose a tile (SVG preferred)
+            fileInput.value = '';
+            fileInput.click();
+        }
+
+        // Rendering
+        function render() {
+            // Clear
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw legacy single image (if present)
+            if (state.image) {
+                ctx.save();
+                ctx.filter = `brightness(${state.brightness}%) contrast(${state.contrast}%)`;
+                ctx.translate(state.offsetX, state.offsetY);
+                ctx.scale(state.zoom, state.zoom);
+                ctx.drawImage(state.image, 0, 0);
+                ctx.restore();
+            }
+
+            // Draw tile mosaic
+            ctx.save();
+            ctx.translate(0, 0); // handle offset/zoom in drawing below
+            for (const key in state.gridImages) {
+                const [col, row] = key.split(',').map(Number);
+                const tile = state.gridImages[key];
+                if (!tile || !tile.img) continue;
+
+                // Destination rectangle (screen space)
+                const dx = state.offsetX + col * state.tileSize * state.zoom;
+                const dy = state.offsetY + row * state.tileSize * state.zoom;
+                const dw = state.tileSize * state.zoom;
+                const dh = state.tileSize * state.zoom;
+
+                // If tile.img is available, draw it scaled to the tile destination size.
+                // For SVG sources, the browser will rasterize at the destination resolution.
+                try {
+                    ctx.drawImage(tile.img, dx, dy, dw, dh);
+                } catch (err) {
+                    // If drawImage fails (rare), draw a placeholder
+                    ctx.fillStyle = '#222';
+                    ctx.fillRect(dx, dy, dw, dh);
+                }
+            }
+            ctx.restore();
+
+            // If grid visible, draw it on top
+            if (state.showGrid) drawGrid();
+
+            // If user has selected a cell to place an image, highlight it
+            if (state.selectedCell) {
+                const cx = state.selectedCell.col * state.tileSize * state.zoom + state.offsetX;
+                const cy = state.selectedCell.row * state.tileSize * state.zoom + state.offsetY;
+                const w = state.tileSize * state.zoom;
+                const h = state.tileSize * state.zoom;
+                ctx.save();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'rgba(255, 235, 59, 0.95)'; // bright highlight
+                ctx.strokeRect(cx + 1.5, cy + 1.5, w - 3, h - 3);
+                ctx.restore();
+            }
+
+            renderAnnotations();
+            renderMinimap();
+        }
+
+        function drawGrid() {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0, 212, 255, 0.3)';
+            ctx.lineWidth = 1;
+
+            const step = state.tileSize * state.zoom;
+            // compute start positions so grid moves with panning
+            // ensure startX is in range [-step, step] to catch offscreen
+            let startX = ((state.offsetX % step) + step) % step - step;
+            let startY = ((state.offsetY % step) + step) % step - step;
+
+            for (let x = startX; x < canvas.width + step; x += step) {
+                ctx.beginPath();
+                ctx.moveTo(Math.round(x) + 0.5, 0);
+                ctx.lineTo(Math.round(x) + 0.5, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = startY; y < canvas.height + step; y += step) {
+                ctx.beginPath();
+                ctx.moveTo(0, Math.round(y) + 0.5);
+                ctx.lineTo(canvas.width, Math.round(y) + 0.5);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        // Enhanced Minimap - shows positions of all added images
+        function renderMinimap() {
+            minimapCanvas.width = 200;
+            minimapCanvas.height = 150;
+            minimapCtx.fillStyle = '#000';
+            minimapCtx.fillRect(0, 0, 200, 150);
+
+            // If have any grid tiles, show the mosaic layout
+            const keys = Object.keys(state.gridImages);
+            if (keys.length > 0) {
+                // Calculate the bounds of all tiles
+                let minCol = Infinity, minRow = Infinity, maxCol = -Infinity, maxRow = -Infinity;
+                for (const k of keys) {
+                    const [c, r] = k.split(',').map(Number);
+                    minCol = Math.min(minCol, c); minRow = Math.min(minRow, r);
+                    maxCol = Math.max(maxCol, c); maxRow = Math.max(maxRow, r);
+                }
+                
+                // Add some padding around the edges
+                minCol -= 1; minRow -= 1;
+                maxCol += 1; maxRow += 1;
+                
+                const gridWidth = maxCol - minCol + 1;
+                const gridHeight = maxRow - minRow + 1;
+                
+                // Calculate cell size to fit in minimap
+                const cellSize = Math.min(200 / gridWidth, 150 / gridHeight);
+                const offsetX = (200 - (gridWidth * cellSize)) / 2;
+                const offsetY = (150 - (gridHeight * cellSize)) / 2;
+                
+                // Draw grid background
+                minimapCtx.fillStyle = '#111';
+                minimapCtx.fillRect(offsetX, offsetY, gridWidth * cellSize, gridHeight * cellSize);
+                
+                // Draw grid lines
+                minimapCtx.strokeStyle = '#333';
+                minimapCtx.lineWidth = 1;
+                for (let col = 0; col <= gridWidth; col++) {
+                    const x = offsetX + col * cellSize;
+                    minimapCtx.beginPath();
+                    minimapCtx.moveTo(x, offsetY);
+                    minimapCtx.lineTo(x, offsetY + gridHeight * cellSize);
+                    minimapCtx.stroke();
+                }
+                for (let row = 0; row <= gridHeight; row++) {
+                    const y = offsetY + row * cellSize;
+                    minimapCtx.beginPath();
+                    minimapCtx.moveTo(offsetX, y);
+                    minimapCtx.lineTo(offsetX + gridWidth * cellSize, y);
+                    minimapCtx.stroke();
+                }
+                
+                // Draw filled tiles (removed SVG text indicators)
+                for (const key in state.gridImages) {
+                    const [col, row] = key.split(',').map(Number);
+                    const relCol = col - minCol;
+                    const relRow = row - minRow;
+                    
+                    const x = offsetX + relCol * cellSize;
+                    const y = offsetY + relRow * cellSize;
+                    
+                    // Draw filled cell
+                    minimapCtx.fillStyle = '#00d4ff';
+                    minimapCtx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+                }
+                
+                // Draw viewport rectangle
+                const viewLeft = (-state.offsetX / state.zoom) - (minCol * state.tileSize);
+                const viewTop = (-state.offsetY / state.zoom) - (minRow * state.tileSize);
+                const viewW = canvas.width / state.zoom;
+                const viewH = canvas.height / state.zoom;
+                
+                const viewX = offsetX + (viewLeft / state.tileSize) * cellSize;
+                const viewY = offsetY + (viewTop / state.tileSize) * cellSize;
+                const viewWidth = (viewW / state.tileSize) * cellSize;
+                const viewHeight = (viewH / state.tileSize) * cellSize;
+                
+                minimapCtx.strokeStyle = '#ffeb3b';
+                minimapCtx.lineWidth = 2;
+                minimapCtx.strokeRect(viewX, viewY, viewWidth, viewHeight);
+                
+            } else if (state.image) {
+                // Fallback: original single image display
+                const scale = Math.min(200 / state.image.width, 150 / state.image.height);
+                const w = state.image.width * scale;
+                const h = state.image.height * scale;
+                const x = (200 - w) / 2;
+                const y = (150 - h) / 2;
+                minimapCtx.drawImage(state.image, x, y, w, h);
+                
+                const viewX = -state.offsetX / state.zoom * scale + x;
+                const viewY = -state.offsetY / state.zoom * scale + y;
+                const viewW = canvas.width / state.zoom * scale;
+                const viewH = canvas.height / state.zoom * scale;
+                minimapCtx.strokeStyle = '#00d4ff';
+                minimapCtx.lineWidth = 2;
+                minimapCtx.strokeRect(viewX, viewY, viewW, viewH);
+            } else {
+                // No content - show empty state
+                minimapCtx.fillStyle = '#333';
+                minimapCtx.font = '12px Arial';
+                minimapCtx.textAlign = 'center';
+                minimapCtx.fillText('No tiles loaded', 100, 75);
+            }
+        }
+
+        // Annotations
+        function renderAnnotations() {
+            while (svgOverlay.firstChild) svgOverlay.removeChild(svgOverlay.firstChild);
+            state.annotations.forEach((ann, idx) => {
+                const screenX = ann.x * state.zoom + state.offsetX;
+                const screenY = ann.y * state.zoom + state.offsetY;
+                const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                g.classList.add('annotation-marker');
+                g.setAttribute('data-index', idx);
+                g.onclick = () => focusAnnotation(idx);
+                const glowCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                glowCircle.setAttribute('cx', screenX);
+                glowCircle.setAttribute('cy', screenY);
+                glowCircle.setAttribute('r', 12);
+                glowCircle.setAttribute('fill', 'rgba(0, 212, 255, 0.2)');
+                g.appendChild(glowCircle);
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', screenX);
+                circle.setAttribute('cy', screenY);
+                circle.setAttribute('r', 6);
+                circle.setAttribute('fill', '#00d4ff');
+                circle.setAttribute('stroke', 'white');
+                circle.setAttribute('stroke-width', 2);
+                g.appendChild(circle);
+                const textBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                textBg.setAttribute('x', screenX + 12);
+                textBg.setAttribute('y', screenY - 18);
+                textBg.setAttribute('width', ann.label.length * 8 + 10);
+                textBg.setAttribute('height', 20);
+                textBg.setAttribute('fill', 'rgba(0, 0, 0, 0.8)');
+                textBg.setAttribute('rx', 4);
+                g.appendChild(textBg);
+                const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                text.setAttribute('x', screenX + 17);
+                text.setAttribute('y', screenY - 4);
+                text.setAttribute('fill', 'white');
+                text.setAttribute('font-size', '14');
+                text.setAttribute('font-weight', 'bold');
+                text.textContent = ann.label;
+                g.appendChild(text);
+                svgOverlay.appendChild(g);
+            });
+        }
+
+        function addAnnotation(x, y) {
+            const imgX = (x - state.offsetX) / state.zoom;
+            const imgY = (y - state.offsetY) / state.zoom;
+            const label = prompt('Enter annotation label:', 'Object ' + (state.annotations.length + 1));
+            if (label) {
+                state.annotations.push({ x: imgX, y: imgY, label, timestamp: new Date().toISOString() });
+                render();
+                updateAnnotationList();
+            }
+        }
+
+        function focusAnnotation(index) {
+            const ann = state.annotations[index];
+            state.offsetX = canvas.width / 2 - ann.x * state.zoom;
+            state.offsetY = canvas.height / 2 - ann.y * state.zoom;
+            render();
+        }
+
+        function updateAnnotationList() {
+            const list = document.getElementById('annotation-list');
+            list.innerHTML = '';
+            state.annotations.forEach((ann, idx) => {
+                const item = document.createElement('div');
+                item.className = 'annotation-item';
+                item.textContent = `${idx + 1}. ${ann.label}`;
+                item.onclick = () => focusAnnotation(idx);
+                list.appendChild(item);
+            });
+            document.getElementById('annotation-count').textContent = state.annotations.length;
+        }
+
+        // File loading behavior
+        function loadImageFromFile(event) {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            showLoading(true);
+
+            const targetKey = state.selectedCell ? `${state.selectedCell.col},${state.selectedCell.row}` : null;
+
+            // SVG handling
+            if (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg')) {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const svgText = e.target.result;
+                    const blob = new Blob([svgText], { type: 'image/svg+xml' });
+                    const url = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.onload = function () {
+                        if (targetKey) {
+                            state.gridImages[targetKey] = { type: 'svg', src: url, img: img };
+                        } else {
+                            state.image = img;
+                            document.getElementById('size-display').textContent = `${img.width} × ${img.height}`;
+                            resetView();
+                        }
+                        showLoading(false);
+                        state.selectedCell = null;
+                        updateTileInfo();
+                        render();
+                    };
+                    img.onerror = function () {
+                        console.error('Failed to load SVG as image.');
+                        showLoading(false);
+                        state.selectedCell = null;
+                    };
+                    img.src = url;
+                };
+                reader.readAsText(file);
+            } else {
+                // Raster image
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const img = new Image();
+                    img.onload = function () {
+                        if (targetKey) {
+                            state.gridImages[targetKey] = { type: 'raster', src: e.target.result, img: img };
+                        } else {
+                            state.image = img;
+                            document.getElementById('size-display').textContent = `${img.width} × ${img.height}`;
+                            resetView();
+                        }
+                        showLoading(false);
+                        state.selectedCell = null;
+                        updateTileInfo();
+                        render();
+                    };
+                    img.onerror = function () {
+                        console.error('Failed to load raster image');
+                        showLoading(false);
+                        state.selectedCell = null;
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        // UI controls and helpers
+        function resetView() {
+            if (state.image) {
+                state.zoom = Math.min(canvas.width / state.image.width, canvas.height / state.image.height) * 0.9;
+                state.offsetX = (canvas.width - state.image.width * state.zoom) / 2;
+                state.offsetY = (canvas.height - state.image.height * state.zoom) / 2;
+            } else {
+                const keys = Object.keys(state.gridImages);
+                if (keys.length) {
+                    let minCol = Infinity, minRow = Infinity, maxCol = -Infinity, maxRow = -Infinity;
+                    for (const k of keys) {
+                        const [c, r] = k.split(',').map(Number);
+                        minCol = Math.min(minCol, c); minRow = Math.min(minRow, r);
+                        maxCol = Math.max(maxCol, c); maxRow = Math.max(maxRow, r);
+                    }
+                    
+                    minCol -= 1; minRow -= 1;
+                    maxCol += 1; maxRow += 1;
+                    
+                    const mosaicW = (maxCol - minCol + 1) * state.tileSize;
+                    const mosaicH = (maxRow - minRow + 1) * state.tileSize;
+                    state.zoom = Math.min(canvas.width / mosaicW, canvas.height / mosaicH) * 0.9;
+                    const mosaicPixelW = mosaicW * state.zoom;
+                    const mosaicPixelH = mosaicH * state.zoom;
+                    
+                    const mosaicLeft = -minCol * state.tileSize * state.zoom;
+                    const mosaicTop = -minRow * state.tileSize * state.zoom;
+                    state.offsetX = (canvas.width - mosaicPixelW) / 2 + mosaicLeft;
+                    state.offsetY = (canvas.height - mosaicPixelH) / 2 + mosaicTop;
+                } else {
+                    state.zoom = 1;
+                    state.offsetX = 0;
+                    state.offsetY = 0;
+                }
+            }
+            render();
+            updateUI();
+        }
+
+        function toggleAnnotationMode() {
+            state.annotationMode = !state.annotationMode;
+            const text = document.getElementById('annotationModeText');
+            text.textContent = state.annotationMode ? '✓ Tag Mode ON' : '🏷️ Add Tags';
+            container.style.cursor = state.annotationMode ? 'crosshair' : 'grab';
+        }
+
+        function toggleGrid() {
+            state.showGrid = !state.showGrid;
+            if (!state.showGrid) state.selectedCell = null;
+            
+            // Update button appearance
+            const gridBtn = document.getElementById('gridToggleBtn');
+            if (state.showGrid) {
+                gridBtn.classList.add('button-active');
+                gridBtn.textContent = '🔳 Grid ON';
+            } else {
+                gridBtn.classList.remove('button-active');
+                gridBtn.textContent = '🔲 Toggle Grid';
+            }
+            
+            render();
+        }
+
+        // New function to toggle cell click mode
+        function toggleCellClickMode() {
+            state.cellClickEnabled = !state.cellClickEnabled;
+            
+            // Update button appearance and text
+            const cellClickBtn = document.getElementById('cellClickToggleBtn');
+            const statusDisplay = document.getElementById('cell-click-status');
+            
+            if (state.cellClickEnabled) {
+                cellClickBtn.classList.remove('button-active');
+                cellClickBtn.textContent = '🔒 Disable Cell Clicks';
+                statusDisplay.textContent = 'Enabled';
+            } else {
+                cellClickBtn.classList.add('button-active');
+                cellClickBtn.textContent = '🔓 Enable Cell Clicks';
+                statusDisplay.textContent = 'Disabled';
+            }
+            
+            // Clear any selected cell when disabling
+            if (!state.cellClickEnabled) {
+                state.selectedCell = null;
+                render();
+            }
+        }
+
+        function setZoomLevel(value) {
+            const newZoom = value / 100;
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            state.offsetX = centerX - (centerX - state.offsetX) * (newZoom / state.zoom);
+            state.offsetY = centerY - (centerY - state.offsetY) * (newZoom / state.zoom);
+            state.zoom = newZoom;
+            render(); updateUI();
+        }
+
+        function setBrightness(value) {
+            state.brightness = value;
+            document.getElementById('brightness-display').textContent = value + '%';
+            render();
+        }
+
+        function setContrast(value) {
+            state.contrast = value;
+            document.getElementById('contrast-display').textContent = value + '%';
+            render();
+        }
+
+        function updateUI() {
+            const zoomPercent = Math.round(state.zoom * 100);
+            document.getElementById('zoom-display').textContent = zoomPercent + '%';
+            document.getElementById('zoom-info').textContent = zoomPercent + '%';
+            document.getElementById('zoom-slider').value = zoomPercent;
+        }
+
+        function updatePositionDisplay(x, y) {
+            const imgX = Math.round((x - state.offsetX) / state.zoom);
+            const imgY = Math.round((y - state.offsetY) / state.zoom);
+            document.getElementById('position-display').textContent = `${imgX}, ${imgY}`;
+            
+            // Update cell display when grid is visible
+            if (state.showGrid) {
+                const col = Math.floor(imgX / state.tileSize);
+                const row = Math.floor(imgY / state.tileSize);
+                document.getElementById('cell-display').textContent = `${col}, ${row}`;
+            } else {
+                document.getElementById('cell-display').textContent = 'N/A';
+            }
+        }
+
+        function updateTileInfo() {
+            const keys = Object.keys(state.gridImages);
+            document.getElementById('tile-count').textContent = keys.length;
+            
+            if (keys.length > 0) {
+                let minCol = Infinity, minRow = Infinity, maxCol = -Infinity, maxRow = -Infinity;
+                for (const k of keys) {
+                    const [c, r] = k.split(',').map(Number);
+                    minCol = Math.min(minCol, c); minRow = Math.min(minRow, r);
+                    maxCol = Math.max(maxCol, c); maxRow = Math.max(maxRow, r);
+                }
+                const width = (maxCol - minCol + 1);
+                const height = (maxRow - minRow + 1);
+                document.getElementById('grid-size').textContent = `${width} × ${height}`;
+            } else {
+                document.getElementById('grid-size').textContent = 'N/A';
+            }
+        }
+
+        function showZoomIndicator() {
+            const indicator = document.getElementById('zoom-indicator');
+            indicator.textContent = Math.round(state.zoom * 100) + '%';
+            indicator.classList.add('show');
+            clearTimeout(window.zoomTimeout);
+            window.zoomTimeout = setTimeout(() => indicator.classList.remove('show'), 800);
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+        }
+
+        function exportAnnotations() {
+            // Create a copy of the data without the image objects
+            const exportData = {
+                tiles: {},
+                annotations: state.annotations,
+                exportDate: new Date().toISOString(),
+                tileSize: state.tileSize, // Added for context
+                gridBounds: calculateGridBounds() // Helper function to get grid dimensions
+            };
+            
+            // Process tiles to handle SVG blob URLs
+            for (const [key, tile] of Object.entries(state.gridImages)) {
+                exportData.tiles[key] = {
+                    type: tile.type,
+                    src: tile.src,
+                    // For SVG, could include the actual SVG content if needed
+                    position: key // "col,row" format
+                };
+                
+                // If want to include the actual SVG content:
+                if (tile.type === 'svg' && tile.src.startsWith('blob:')) {
+                    // This would require fetching the blob content
+                    // but it's more complex and might not be necessary
+                }
+            }
+            
+            const json = JSON.stringify(exportData, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `mosaic-export-${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        function calculateGridBounds() {
+            const keys = Object.keys(state.gridImages);
+            if (keys.length === 0) return null;
+            
+            let minCol = Infinity, minRow = Infinity, maxCol = -Infinity, maxRow = -Infinity;
+            for (const k of keys) {
+                const [c, r] = k.split(',').map(Number);
+                minCol = Math.min(minCol, c); minRow = Math.min(minRow, r);
+                maxCol = Math.max(maxCol, c); maxRow = Math.max(maxRow, r);
+            }
+            
+            return { minCol, minRow, maxCol, maxRow };
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
